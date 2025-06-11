@@ -1,0 +1,8 @@
+flask==2.3.3
+flask-cors==4.0.0
+numpy==1.24.3
+opencv-python==4.8.0.76
+mediapipe==0.10.3
+ultralytics==8.0.145
+tensorflow==2.13.0
+absl-py==1.4.0
