@@ -62,20 +62,6 @@ If you experience video lag or slow performance:
 3. View real-time detection results in the right panel
 4. Toggle face markings to visualize facial landmarks
 
-## Hardware Requirements
-
-This application is resource-intensive due to the multiple AI models running simultaneously:
-
-- **Minimum Requirements**: 
-  - CPU: Quad-core processor
-  - RAM: 8GB
-  - GPU: Integrated graphics (with significant performance limitations)
-
-- **Recommended Requirements**:
-  - CPU: Modern multi-core processor (6+ cores)
-  - RAM: 16GB+
-  - GPU: Dedicated graphics card with 4GB+ VRAM
-  - Camera: HD webcam with good low-light performance
 
 ## Model Information
 
