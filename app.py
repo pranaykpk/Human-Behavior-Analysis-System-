@@ -24,7 +24,17 @@ CORS(app, resources={r"/*": {"origins": "*"}})
 # Load models
 face_model = YOLO("../models/yolov8n-face.pt")
 emotion_model = load_model("../mini_pro_integrate/models/emotion_model.h5")
+# Extended emotion labels with more nuanced descriptions
 emotion_labels = ['Angry', 'Disgust', 'Fear', 'Happy', 'Sad', 'Surprise', 'Neutral']
+emotion_display_labels = {
+    'Angry': ['Furious', 'Irritated', 'Annoyed', 'Frustrated'],
+    'Disgust': ['Revolted', 'Disgusted', 'Displeased', 'Disapproving'],
+    'Fear': ['Terrified', 'Anxious', 'Nervous', 'Worried'],
+    'Happy': ['Ecstatic', 'Joyful', 'Cheerful', 'Pleased'],
+    'Sad': ['Depressed', 'Sorrowful', 'Disappointed', 'Unhappy'],
+    'Surprise': ['Shocked', 'Amazed', 'Astonished', 'Startled'],
+    'Neutral': ['Calm', 'Composed', 'Relaxed', 'Indifferent']
+}
 
 # Mediapipe face mesh for landmarks
 mp_face_mesh = mp.solutions.face_mesh
@@ -61,27 +71,100 @@ def eye_aspect_ratio(landmarks, eye_indices, image_w, image_h):
     return (A + B) / (2.0 * C)
 
 def detect_expression(landmarks, image_w, image_h):
-    # Get relevant points
+    # Get relevant points for mouth
     mouth_top = landmarks[13]  # upper inner lip
     mouth_bottom = landmarks[14]  # lower inner lip
     mouth_left = landmarks[78]
     mouth_right = landmarks[308]
-
-    # Convert to pixel
+    
+    # Get eyebrow points
+    left_eyebrow_inner = landmarks[336]
+    left_eyebrow_outer = landmarks[296]
+    right_eyebrow_inner = landmarks[107]
+    right_eyebrow_outer = landmarks[67]
+    
+    # Get eye points for blinking
+    left_eye_top = landmarks[159]
+    left_eye_bottom = landmarks[145]
+    right_eye_top = landmarks[386]
+    right_eye_bottom = landmarks[374]
+    
+    # Get nose and cheek points for additional expressions
+    nose_tip = landmarks[4]
+    left_cheek = landmarks[187]
+    right_cheek = landmarks[411]
+    
+    # Convert to pixel coordinates
     top = np.array([mouth_top.x * image_w, mouth_top.y * image_h])
     bottom = np.array([mouth_bottom.x * image_w, mouth_bottom.y * image_h])
     left = np.array([mouth_left.x * image_w, mouth_left.y * image_h])
     right = np.array([mouth_right.x * image_w, mouth_right.y * image_h])
-
+    
+    # Eyebrow positions
+    l_eyebrow_inner = np.array([left_eyebrow_inner.x * image_w, left_eyebrow_inner.y * image_h])
+    l_eyebrow_outer = np.array([left_eyebrow_outer.x * image_w, left_eyebrow_outer.y * image_h])
+    r_eyebrow_inner = np.array([right_eyebrow_inner.x * image_w, right_eyebrow_inner.y * image_h])
+    r_eyebrow_outer = np.array([right_eyebrow_outer.x * image_w, right_eyebrow_outer.y * image_h])
+    
+    # Eye openness
+    l_eye_top = np.array([left_eye_top.x * image_w, left_eye_top.y * image_h])
+    l_eye_bottom = np.array([left_eye_bottom.x * image_w, left_eye_bottom.y * image_h])
+    r_eye_top = np.array([right_eye_top.x * image_w, right_eye_top.y * image_h])
+    r_eye_bottom = np.array([right_eye_bottom.x * image_w, right_eye_bottom.y * image_h])
+    
+    # Nose and cheeks
+    nose = np.array([nose_tip.x * image_w, nose_tip.y * image_h])
+    l_cheek = np.array([left_cheek.x * image_w, left_cheek.y * image_h])
+    r_cheek = np.array([right_cheek.x * image_w, right_cheek.y * image_h])
+    
+    # Calculate mouth metrics
     mouth_vert = np.linalg.norm(top - bottom)
     mouth_horiz = np.linalg.norm(left - right)
-
     mouth_ratio = mouth_vert / mouth_horiz
-
-    if mouth_ratio > 0.5:
+    
+    # Calculate eyebrow metrics (higher values mean raised eyebrows)
+    left_eyebrow_height = l_eyebrow_outer[1] - l_eye_top[1]
+    right_eyebrow_height = r_eyebrow_outer[1] - r_eye_top[1]
+    eyebrow_height = (left_eyebrow_height + right_eyebrow_height) / 2
+    
+    # Calculate eye openness
+    left_eye_openness = np.linalg.norm(l_eye_top - l_eye_bottom)
+    right_eye_openness = np.linalg.norm(r_eye_top - r_eye_bottom)
+    eye_openness = (left_eye_openness + right_eye_openness) / 2
+    
+    # Eyebrow angle (for expressions like confusion, anger)
+    left_eyebrow_angle = np.arctan2(l_eyebrow_inner[1] - l_eyebrow_outer[1], 
+                                   l_eyebrow_inner[0] - l_eyebrow_outer[0])
+    right_eyebrow_angle = np.arctan2(r_eyebrow_inner[1] - r_eyebrow_outer[1], 
+                                    r_eyebrow_inner[0] - r_eyebrow_outer[0])
+    
+    # Detect expressions based on combined facial features
+    if mouth_ratio > 0.6:  # Very open mouth
         return "Yawn"
-    elif mouth_ratio > 0.3:
-        return "Smile"
+    elif mouth_ratio > 0.45:  # Moderately open mouth
+        if eyebrow_height < -15:  # Raised eyebrows with open mouth
+            return "Surprised"
+        else:
+            return "Speaking"
+    elif mouth_ratio > 0.35:  # Slightly open mouth
+        if mouth_horiz > image_w * 0.2:  # Wide smile
+            return "Big Smile"
+        else:
+            return "Slight Smile"
+    elif mouth_ratio < 0.2 and mouth_horiz > image_w * 0.15:  # Closed but wide mouth
+        return "Smirk"
+    elif left_eyebrow_angle > 0.2 and right_eyebrow_angle < -0.2:  # Eyebrows in opposite directions
+        return "Confused"
+    elif left_eyebrow_angle < -0.1 and right_eyebrow_angle > 0.1:  # Eyebrows angled inward
+        return "Concerned"
+    elif eyebrow_height < -20:  # Very raised eyebrows
+        return "Surprised"
+    elif eyebrow_height > 5:  # Lowered eyebrows
+        return "Serious"
+    elif eye_openness < 5:  # Nearly closed eyes
+        return "Squinting"
+    elif eye_openness > 15:  # Wide open eyes
+        return "Alert"
     else:
         return "Neutral"
 
@@ -91,7 +174,45 @@ def detect_emotion(face_img):
     face = img_to_array(face)
     face = np.expand_dims(face, axis=0)
     preds = emotion_model.predict(face, verbose=0)[0]
-    return emotion_labels[np.argmax(preds)], np.max(preds)
+    
+    # Get the base emotion and confidence
+    emotion_idx = np.argmax(preds)
+    base_emotion = emotion_labels[emotion_idx]
+    confidence = np.max(preds)
+    
+    # Use more nuanced emotion labels based on confidence level
+    if base_emotion in emotion_display_labels:
+        # Select a more specific emotion based on confidence
+        # Higher confidence = stronger emotion
+        specific_emotions = emotion_display_labels[base_emotion]
+        
+        if confidence > 0.8:
+            specific_emotion = specific_emotions[0]  # Strongest version
+        elif confidence > 0.6:
+            specific_emotion = specific_emotions[1]  # Strong version
+        elif confidence > 0.4:
+            specific_emotion = specific_emotions[2]  # Moderate version
+        else:
+            specific_emotion = specific_emotions[3]  # Mild version
+            
+        # Always include the base emotion for clarity
+        display_emotion = f"{base_emotion}: {specific_emotion}"
+    else:
+        display_emotion = base_emotion
+    
+    # Also check for mixed emotions (second highest prediction)
+    if len(preds) > 1:
+        # Get second highest emotion if it's close to the highest
+        sorted_indices = np.argsort(preds)[::-1]
+        second_emotion_idx = sorted_indices[1]
+        second_emotion = emotion_labels[second_emotion_idx]
+        second_confidence = preds[second_emotion_idx]
+        
+        # If second emotion is close in confidence, it's a mixed emotion
+        if second_confidence > 0.3 and (confidence - second_confidence) < 0.2:
+            return f"{display_emotion} with {second_emotion}", confidence
+    
+    return display_emotion, confidence
 
 def process_frame(frame):
     global COUNTER, detection_results, show_face_markings
@@ -145,8 +266,28 @@ def process_frame(frame):
         detection_results["emotion"] = emotion
         detection_results["emotion_prob"] = float(prob)
         
-        cv2.putText(display_frame, f"{emotion} ({prob:.2f})", (x1, y1 - 10),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+        # Choose color based on emotion type for more vibrant display
+        emotion_color = (0, 255, 0)  # Default green
+        
+        # Assign vibrant colors to different emotion categories
+        if any(word in emotion.lower() for word in ['furious', 'angry', 'irritated', 'annoyed', 'frustrated']):
+            emotion_color = (0, 0, 255)  # Red for anger
+        elif any(word in emotion.lower() for word in ['happy', 'ecstatic', 'joyful', 'cheerful', 'pleased']):
+            emotion_color = (0, 215, 255)  # Bright orange for happiness (more visible)
+        elif any(word in emotion.lower() for word in ['sad', 'depressed', 'sorrowful', 'disappointed']):
+            emotion_color = (255, 0, 0)  # Blue for sadness
+        elif any(word in emotion.lower() for word in ['surprise', 'shocked', 'amazed', 'astonished']):
+            emotion_color = (255, 0, 255)  # Purple for surprise
+        elif any(word in emotion.lower() for word in ['fear', 'terrified', 'anxious', 'nervous']):
+            emotion_color = (0, 165, 255)  # Orange for fear
+        elif any(word in emotion.lower() for word in ['disgust', 'revolted', 'displeased']):
+            emotion_color = (0, 128, 128)  # Olive for disgust
+        
+        # Add a background rectangle for better visibility
+        text_size = cv2.getTextSize(emotion, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0]
+        cv2.rectangle(display_frame, (x1, y1 - 30), (x1 + text_size[0], y1), emotion_color, -1)
+        cv2.putText(display_frame, emotion, (x1, y1 - 10),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)  # White text on colored background
 
         # Drowsiness detection
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -162,9 +303,27 @@ def process_frame(frame):
                 expression = detect_expression(landmarks.landmark, image_w, image_h)
                 detection_results["expression"] = expression
 
-                # Draw expression on screen
-                cv2.putText(display_frame, f"Expression: {expression}", (10, 60),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
+                # Draw expression on screen with vibrant colors based on expression type
+                expression_color = (255, 255, 0)  # Default yellow
+                
+                # Assign colors based on expression type
+                if expression in ["Big Smile", "Slight Smile", "Smirk"]:
+                    expression_color = (0, 255, 255)  # Yellow for happy expressions
+                elif expression in ["Yawn", "Speaking"]:
+                    expression_color = (0, 165, 255)  # Orange for mouth movements
+                elif expression in ["Surprised", "Alert"]:
+                    expression_color = (255, 0, 255)  # Purple for surprise/alert
+                elif expression in ["Confused", "Concerned"]:
+                    expression_color = (255, 0, 0)    # Blue for confusion/concern
+                elif expression in ["Serious", "Squinting"]:
+                    expression_color = (0, 0, 255)    # Red for serious expressions
+                
+                # Create a background for better visibility
+                text = f"Expression: {expression}"
+                text_size = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0]
+                cv2.rectangle(display_frame, (10, 40), (10 + text_size[0], 65), expression_color, -1)
+                cv2.putText(display_frame, text, (10, 60),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)  # White text on colored background
                 
                 # Draw face landmarks if enabled
                 if show_face_markings:
